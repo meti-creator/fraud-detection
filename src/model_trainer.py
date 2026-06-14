@@ -9,8 +9,8 @@ class ModelTrainer:
         self.random_state = random_state
 
     def train_baseline(self, X_train, y_train):
-        """Trains Logistic Regression with robust solver setup to prevent convergence errors."""
-        model = LogisticRegression(max_iter=3000, solver='saga', random_state=self.random_state)
+        """Trains Logistic Regression using liblinear for rapid convergence."""
+        model = LogisticRegression(max_iter=1000, solver='liblinear', random_state=self.random_state)
         model.fit(X_train, y_train)
         return model
 
@@ -25,12 +25,16 @@ class ModelTrainer:
         model.fit(X_train, y_train)
         return model
 
+   
     def run_cross_validation(self, model, X, y, cv=5):
-        """Performs Stratified 5-Fold Cross-Validation and returns mean ± std."""
+        """Performs Stratified 5-Fold Cross-Validation with progress prints."""
+        print(f"   [CV Progress] Initializing Stratified {cv}-Fold Cross-Validation...")
         skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=self.random_state)
         scoring = ['f1', 'average_precision']
         
+        # We run cross_validate
         scores = cross_validate(model, X, y, cv=skf, scoring=scoring, n_jobs=-1)
+        print(f"   [CV Progress] Finished all {cv} folds successfully.")
         
         return {
             "CV_F1_Mean": np.mean(scores['test_f1']),
