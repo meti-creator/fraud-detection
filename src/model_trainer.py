@@ -1,44 +1,82 @@
-# src/model_trainer.py
-from sklearn.linear_model import LogisticRegression
+import os
+import json
+import joblib
+import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_validate
-import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
 
-class ModelTrainer:
-    def __init__(self, random_state=42):
-        self.random_state = random_state
+def run_secure_training_pipeline():
+    # 1. DEFENSIVE LAYER 1: Hardened CSV Data Ingestion Handling
+    data_path = os.path.join("notebooks", "data", "processed", "cleaned_fraud.csv")
+    
+    try:
+        print(f"📥 Loading structural feature matrix from: {data_path}")
+        df = pd.read_csv(data_path)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            f"❌ Ingestion Error: The file '{data_path}' cannot be located on disk. "
+            f"Please verify that your preprocessing notebook or script has executed successfully."
+        ) from e
+    except pd.errors.EmptyDataError as e:
+        raise ValueError(f"❌ Data Integrity Error: The file at '{data_path}' is completely empty.") from e
+    except Exception as e:
+        raise RuntimeError(f"❌ Unexpected OS read failure during CSV decoding: {str(e)}") from e
 
-    def train_baseline(self, X_train, y_train):
-        """Trains Logistic Regression using liblinear for rapid convergence."""
-        model = LogisticRegression(max_iter=1000, solver='liblinear', random_state=self.random_state)
+    # 2. DEFENSIVE LAYER 2: Structural Verification of Target and Feature Attributes
+    target_column = 'class'
+    if target_column not in df.columns:
+        # Fallback evaluation option to look for common alternative target tags
+        alternatives = ['target', 'is_fraud', 'fraud']
+        found_alt = [col for col in alternatives if col in df.columns]
+        if found_alt:
+            target_column = found_alt[0]
+            print(f"⚠️ Target column alignment shifted to detected alternative: '{target_column}'")
+        else:
+            raise KeyError(f"❌ Array Shape Error: Required dependent label '{target_column}' is missing from the dataset rows.")
+
+    feature_cols = [col for col in df.columns if col.lower() not in [target_column, 'user_id', 'device_id', 'signup_time']]
+    X = df[feature_cols]
+    y = df[target_column]
+
+    if X.empty or len(y) == 0:
+        raise ValueError("❌ Structural Error: Split dimensions failed. Extracted feature matrix or target vector contains zero samples.")
+
+    # Execute split matrix processing safely
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    # 3. DEFENSIVE LAYER 3: Model Fitting Validation Boundary
+    try:
+        print(f"🏋️ Initializing Random Forest Fit on {X_train.shape[0]} training samples across {X_train.shape[1]} features...")
+        model = RandomForestClassifier(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1)
         model.fit(X_train, y_train)
-        return model
+        print("✅ Model convergence achieved successfully.")
+    except ValueError as e:
+        raise ValueError(f"❌ Mathematical Alignment Failure: Input data arrays contain illegal NaN values or incompatible datatypes: {str(e)}") from e
+    except Exception as e:
+        raise RuntimeError(f"❌ Computational execution failure during tree compilation: {str(e)}") from e
 
-    def train_ensemble(self, X_train, y_train, n_estimators=100, max_depth=10):
-        """Trains a tuned Random Forest Ensemble model."""
-        model = RandomForestClassifier(
-            n_estimators=n_estimators, 
-            max_depth=max_depth, 
-            random_state=self.random_state,
-            n_jobs=-1
-        )
-        model.fit(X_train, y_train)
-        return model
+    # 4. DEFENSIVE LAYER 4: Safe Artifact Storage & Metrics Logging
+    models_dir = "models"
+    os.makedirs(models_dir, exist_ok=True)
+    model_output_path = os.path.join(models_dir, "random_forest_fraud_model.joblib")
+    metrics_path = os.path.join(models_dir, "evaluation_metrics.json")
 
-   
-    def run_cross_validation(self, model, X, y, cv=5):
-        """Performs Stratified 5-Fold Cross-Validation with progress prints."""
-        print(f"   [CV Progress] Initializing Stratified {cv}-Fold Cross-Validation...")
-        skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=self.random_state)
-        scoring = ['f1', 'average_precision']
+    try:
+        # Persist model binary
+        joblib.dump(model, model_output_path)
+        print(f"📦 Selected best model binary successfully persisted to: {model_output_path}")
+
+        # Compute and write evaluation matrix summary json
+        y_pred = model.predict(X_test)
+        report = classification_report(y_test, y_pred, output_dict=True)
         
-        # We run cross_validate
-        scores = cross_validate(model, X, y, cv=skf, scoring=scoring, n_jobs=-1)
-        print(f"   [CV Progress] Finished all {cv} folds successfully.")
+        with open(metrics_path, "w") as f:
+            json.dump(report, f, indent=4)
+        print(f"💾 Metrics report securely written to: {metrics_path}")
         
-        return {
-            "CV_F1_Mean": np.mean(scores['test_f1']),
-            "CV_F1_Std": np.std(scores['test_f1']),
-            "CV_AUCPR_Mean": np.mean(scores['test_average_precision']),
-            "CV_AUCPR_Std": np.std(scores['test_average_precision'])
-        }
+    except IOError as e:
+        raise IOError(f"❌ Disk Workspace Permissions Error: Unable to write serialization artifacts to disk: {str(e)}") from e
+
+if __name__ == "__main__":
+    run_secure_training_pipeline()
